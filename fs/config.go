@@ -21,6 +21,7 @@ type Config struct {
 	HideResourcesInfo bool
 	SystemSchemas     []any // types to build the system schemas
 	AuthConfig        *AuthConfig
+	CacheConfig       *CacheConfig
 }
 
 func (ac *Config) Clone() *Config {
@@ -37,6 +38,7 @@ func (ac *Config) Clone() *Config {
 		HideResourcesInfo: ac.HideResourcesInfo,
 		SystemSchemas:     append([]any{}, ac.SystemSchemas...),
 		AuthConfig:        ac.AuthConfig.Clone(),
+		CacheConfig:       ac.CacheConfig.Clone(),
 	}
 
 	if ac.DBConfig != nil {

@@ -2,10 +2,15 @@ package fastschema
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"sync"
+	"time"
 
+	"github.com/eko/gocache/lib/v4/cache"
+	"github.com/eko/gocache/lib/v4/store"
+	redisstore "github.com/eko/gocache/store/redis/v4"
 	"github.com/fastschema/fastschema/db"
 	"github.com/fastschema/fastschema/fs"
 	"github.com/fastschema/fastschema/logger"
@@ -13,6 +18,7 @@ import (
 	"github.com/fastschema/fastschema/pkg/restfulresolver"
 	"github.com/fastschema/fastschema/schema"
 	"github.com/fatih/color"
+	"github.com/redis/go-redis/v9"
 )
 
 type App struct {
@@ -39,14 +45,16 @@ type App struct {
 	statics         []*fs.StaticFs
 	openAPISpec     []byte
 	authProviders   map[string]fs.AuthProvider
+	cacheProviders  map[string]fs.CacheProvider
 }
 
 func New(config *fs.Config) (_ *App, err error) {
 	a := &App{
-		config:        config.Clone(),
-		disks:         []fs.Disk{},
-		roles:         []*fs.Role{},
-		authProviders: map[string]fs.AuthProvider{},
+		config:         config.Clone(),
+		disks:          []fs.Disk{},
+		roles:          []*fs.Role{},
+		authProviders:  map[string]fs.AuthProvider{},
+		cacheProviders: map[string]fs.CacheProvider{},
 		hooks: &fs.Hooks{
 			DBHooks: &db.Hooks{},
 		},
@@ -109,6 +117,10 @@ func (a *App) Config() *fs.Config {
 
 func (a *App) GetAuthProvider(name string) fs.AuthProvider {
 	return a.authProviders[name]
+}
+
+func (a *App) GetCacheProvider(name string) fs.CacheProvider {
+	return a.cacheProviders[name]
 }
 
 func (a *App) Key() string {
@@ -194,6 +206,54 @@ func (a *App) Reload(ctx context.Context, migration *db.Migration) (err error) {
 // UpdateCache updates the application cache.
 // It fetches all roles from the database and stores them in the cache.
 func (a *App) UpdateCache(ctx context.Context) (err error) {
+	// a.cache().Set()
+	if len(a.cacheProviders) > 0 {
+		rdb := redis.NewClient(&redis.Options{
+			Addr:     "localhost:6379", // use default Addr
+			Password: "",               // no password set
+			DB:       0,                // use default DB
+		})
+
+		_, errr := rdb.Ping(ctx).Result()
+		if errr != nil {
+			fmt.Println("Error connecting to Redisss:", errr)
+			a.Logger().Info("eeee")
+		}
+
+		fmt.Println("Connected to Redis successfully")
+		redisStore := redisstore.NewRedis(rdb, store.WithExpiration(10*time.Second))
+
+		cacheManager := cache.New[any](redisStore)
+		roles, errQuery := db.Query[*fs.Role](a.DB()).Select(
+			"id",
+			"name",
+			"description",
+			"root",
+			"permissions",
+			schema.FieldCreatedAt,
+			schema.FieldUpdatedAt,
+			schema.FieldDeletedAt,
+		).Get(ctx)
+
+		jsonData, err := json.Marshal(roles)
+
+		jsonString := string(jsonData)
+		if errQuery != nil {
+			panic(errQuery)
+		}
+
+		errrr := cacheManager.Set(ctx, "my-key", jsonString, store.WithExpiration(50*time.Second))
+		if errrr != nil {
+			panic(errrr)
+		}
+
+		value, err := cacheManager.Get(ctx, "my-key")
+		if err != nil {
+			fmt.Println("Error getting cache:", err)
+		}
+		a.Logger().Info(value)
+	}
+
 	if a.roles, err = db.Query[*fs.Role](a.DB()).Select(
 		"id",
 		"name",

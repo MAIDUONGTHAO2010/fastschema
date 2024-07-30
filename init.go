@@ -13,6 +13,7 @@ import (
 	"github.com/fastschema/fastschema/fs"
 	"github.com/fastschema/fastschema/logger"
 	"github.com/fastschema/fastschema/pkg/auth"
+	"github.com/fastschema/fastschema/pkg/cache"
 	"github.com/fastschema/fastschema/pkg/entdbadapter"
 	"github.com/fastschema/fastschema/pkg/errors"
 	"github.com/fastschema/fastschema/pkg/rclonefs"
@@ -29,6 +30,7 @@ var embedDashStatic embed.FS
 func init() {
 	fs.RegisterAuthProviderMaker("github", auth.NewGithubAuthProvider)
 	fs.RegisterAuthProviderMaker("google", auth.NewGoogleAuthProvider)
+	fs.RegisterCacheProviderMaker("redis", cache.NewRedisCacheProvider)
 }
 
 func (a *App) init() (err error) {
@@ -41,6 +43,10 @@ func (a *App) init() (err error) {
 	}
 
 	if err := a.createAuthProviders(); err != nil {
+		return err
+	}
+
+	if err := a.createCacheProviders(); err != nil {
 		return err
 	}
 
@@ -215,6 +221,12 @@ func (a *App) prepareConfig() (err error) {
 		}
 	}
 
+	if a.config.CacheConfig == nil && utils.Env("CACHE") != "" {
+		if err := json.Unmarshal([]byte(utils.Env("CACHE")), &a.config.CacheConfig); err != nil {
+			return err
+		}
+	}
+
 	return nil
 }
 
@@ -304,6 +316,27 @@ func (a *App) createAuthProviders() (err error) {
 		}
 
 		a.authProviders[name] = provider
+	}
+
+	return nil
+}
+
+func (a *App) createCacheProviders() (err error) {
+	if a.config.CacheConfig == nil {
+		return nil
+	}
+
+	for name, config := range a.config.CacheConfig.Providers {
+		if !utils.Contains(a.config.CacheConfig.EnabledProviders, name) {
+			continue
+		}
+
+		provider, err := fs.CreateCacheProvider(name, config)
+		if err != nil {
+			return err
+		}
+
+		a.cacheProviders[name] = provider
 	}
 
 	return nil
